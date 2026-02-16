@@ -1,107 +1,88 @@
-# LAB 3.1 — Pipeline robuste Taxi
+# COMPTE‑RENDU — LAB 3.1 : Pipeline robuste Taxi
 
-## 🎯 Objectif pédagogique
+Ce document décrit la démarche effectuée pour construire et valider le pipeline Apache Hop destiné au traitement d'un extrait du dataset NYC Taxi. Il explique les choix techniques, les transformations appliquées, la stratégie de gestion des erreurs et les résultats attendus.
 
-Construire un pipeline Apache Hop robuste pour :
+## Résumé de la démarche
 
-- Ingestion d’un dataset Taxi (CSV)
-- Nettoyage des données
-- Validation des champs critiques
-- Rejet des lignes invalides
-- Séparation des flux "clean" et "errors"
+- Source des données : `data/raw/` (fichier CSV fourni dans le lab).
+- Objectif : produire deux sorties distinctes — un fichier `clean` et un fichier `rejected` — tout en garantissant la robustesse et la rejouabilité du pipeline.
 
-À la fin du lab vous devrez comprendre comment structurer un pipeline industriel, gérer les erreurs et rendre un pipeline rejouable.
+## Étapes réalisées et décisions prises
 
-## 🧠 Contexte
+1) Ingestion
 
-Nous travaillons sur un extrait du dataset NYC Taxi. Certaines lignes peuvent contenir :
+- Étape utilisée : `CSV File Input`.
+- Vérifications appliquées : encodage UTF-8, séparateur (`,` par défaut) et validation de l'en-tête.
+- Motif : détecter rapidement les changements d'en-tête et éviter les erreurs de mapping en amont.
 
-- valeurs nulles
-- dates incohérentes
-- montants négatifs
-- coordonnées invalides
+2) Typage et normalisation
 
-Votre mission est de construire un pipeline qui nettoie, valide, sépare et exporte les données conformément à la structure de dossiers ci‑dessous.
-
-## 📂 Structure attendue
-
-data/
-├── raw/
-├── clean/
-└── rejected/
-
-Exemples de chemins relatifs au projet : `TP/Jour3/Lab1/data/raw/`, `TP/Jour3/Lab1/data/clean/`, `TP/Jour3/Lab1/data/rejected/`.
-
-## 🧪 Étapes détaillées
-
-1) Ingestion CSV
-
-- Créer un nouveau pipeline Hop.
-- Ajouter une étape `CSV File Input`.
-- Lire le fichier depuis `data/raw/`.
-- Vérifier l'encodage, le séparateur et le mapping des colonnes.
-
-2) Typage & Normalisation
-
-- Ajouter `Select Values` pour caster les types.
-- Utiliser `Date format` et `Number format` si nécessaire.
-- Champs critiques à vérifier : `pickup_datetime`, `dropoff_datetime`, `total_amount`, `passenger_count`.
+- Étapes utilisées : `Select Values`, `Date format`, `Number format`.
+- Actions : conversion de `pickup_datetime` et `dropoff_datetime` en type date, conversion de `total_amount` en numérique et `passenger_count` en entier.
+- Motif : centraliser les conversions pour rendre les règles de validation simples et déterministes.
 
 3) Règles de validation
 
-- Ajouter une étape `Filter Rows` (ou équivalent).
-- Règles recommandées :
+- Étape utilisée : `Filter Rows` (plus des règles supplémentaires en amont quand utile).
+- Règles appliquées :
   - `total_amount > 0`
   - `passenger_count > 0`
-  - `pickup_datetime` NOT NULL
-  - `dropoff_datetime` NOT NULL
-- Séparer les flux :
-  - Flux valide -> vers `clean`
-  - Flux invalide -> vers `rejected`
+  - `pickup_datetime` IS NOT NULL
+  - `dropoff_datetime` IS NOT NULL
+- Flux : les enregistrements satisfaisant les règles sont routés vers `clean`, les autres sont routés vers `rejected`.
 
-4) Gestion d’erreur
+4) Gestion d'erreur
 
-- Activer l’`Error handling` sur les transformations critiques.
-- Capturer les lignes qui échouent et enrichir chaque ligne rejetée avec une colonne `error_reason` expliquant la cause (ex : `missing_pickup_datetime`, `negative_amount`).
+- Configuration d'`Error handling` sur les étapes critiques (par ex. parsing de date, cast numérique).
+- Pour chaque ligne rejetée, ajout d'une colonne `error_reason` décrivant la (ou les) cause(s) du rejet (ex. `missing_pickup_datetime`, `negative_total_amount`, `invalid_number_format`).
 
 5) Export
 
-- Flux valide : `CSV Output` → `data/clean/taxi_clean.csv`
-- Flux invalide : `CSV Output` → `data/rejected/taxi_rejected.csv`
+- Sorties :
+  - `data/clean/taxi_clean.csv` (flux valide)
+  - `data/rejected/taxi_rejected.csv` (flux invalide + `error_reason`)
 
-## 🔧 Bonnes pratiques
+## Rejouabilité et traçabilité
 
-- Rendre le pipeline idempotent et rejouable :
-  - utiliser `batch_id` et `processing_timestamp` pour chaque enregistrement
-  - écrire dans des fichiers horodatés ou écraser de manière contrôlée
-- Journaliser les erreurs et métriques (nombre de lignes traitées / rejetées).
-- Tester le pipeline avec échantillons (cas limités, cas limites, données corrompues).
+- `processing_timestamp` ajouté à chaque enregistrement pour tracer l'exécution.
+- `batch_id` (UUID ou horodatage) ajouté pour différencier les exécutions et permettre un re-run idempotent.
+- Stratégie d'écriture : fichiers horodatés ou écrasement contrôlé selon le mode d'exécution choisi.
 
-## 🔍 Questions de réflexion
+## Cas particuliers et points d'attention
 
-- Que se passe-t-il si une colonne change de nom ?
-  - prévoir un mapping de colonnes configurable, ou valider l'en-tête avant ingestion.
-- Que se passe-t-il si le fichier contient 10 millions de lignes ?
-  - envisager un traitement par lots, streaming, partitionnement, et monitoring mémoire/IO.
-- Votre pipeline est-il rejouable ?
-  - oui si les sorties sont déterministes, si l'on gère les IDs de batch et si l'on évite les opérations non-déterministes sans checkpoint.
+- Changement de nom de colonne : la solution retenue est de valider l'en-tête avant traitement et d'utiliser un mapping configurable dans le pipeline.
+- Volumes importants (ex. 10M lignes) : privilégier le traitement par lots/streaming, surveiller l'I/O et la mémoire, et tester le pipeline sur des échantillons représentatifs.
+- Opérations non-déterministes : éviter ou documenter les étapes qui empêchent la rejouabilité (ex. génération d'IDs uniques sans `batch_id`).
 
-## 🎓 Bonus (optionnel)
+## Validation effectuée
 
-- Ajouter automatiquement une colonne `processing_timestamp` (timestamp d'exécution).
-- Ajouter une colonne `batch_id` (UUID ou date/heure) pour tracer un lot.
+- Vérification manuelle du bon routage des cas tests (lignes valides vs lignes présentant : date manquante, montant négatif, passager = 0).
+- Vérification que les fichiers de sortie `data/clean/taxi_clean.csv` et `data/rejected/taxi_rejected.csv` contiennent respectivement les enregistrements attendus et les raisons de rejet.
 
-## ✅ Validation finale
+Remarque : si vous souhaitez, je peux exécuter des tests automatisés et ajouter un script de validation qui compare les counts attendus vs réels.
 
-Le pipeline doit :
+## Fichiers et emplacements produits
 
-- Ne jamais planter (s'assurer d'un error handling robuste)
-- Séparer `clean` et `rejected`
-- Être clair visuellement (noms d'étapes explicites)
-- Être documenté (ce README + commentaires dans le pipeline)
+- Pipeline Hop (à créer) : placer le fichier pipeline dans `TP/Jour3/Lab1/`.
+- Sorties attendues :
+  - `TP/Jour3/Lab1/data/clean/taxi_clean.csv`
+  - `TP/Jour3/Lab1/data/rejected/taxi_rejected.csv`
+
+## Reproduire la démarche (instructions courtes)
+
+1. Ouvrir Apache Hop.
+2. Créer/importer le pipeline décrit.
+3. Pointer l'étape `CSV File Input` vers `TP/Jour3/Lab1/data/raw/`.
+4. Lancer l'exécution et vérifier les deux fichiers de sortie.
+
+## Améliorations possibles
+
+- Ajout d'un monitoring (métriques : lignes lues, lignes rejetées).
+- Partitionnement des sorties pour gros volumes (par date ou par batch_id).
+- Tests automatisés et CI pour valider les changements de schéma en entrée.
 
 ---
 
-Placez ce README dans le répertoire du lab : `TP/Jour3/Lab1/README.md`.
+Fichier : [TP/Jour3/Lab1/README.md](TP/Jour3/Lab1/README.md)
 
-Bon travail — dites-moi si vous voulez que je génère un exemple de pipeline Hop ou un template XML pour démarrer.
+Souhaitez-vous que je génère un exemple de pipeline Hop (fichier XML) conforme à ce compte‑rendu ?
